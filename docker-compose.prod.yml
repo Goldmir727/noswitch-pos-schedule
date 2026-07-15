@@ -1,0 +1,141 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: pos.tudominio.com
+      EMAIL: admin@tudominio.com
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pos_db
+      POSTGRES_USER: pos_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    secrets:
+      - db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pos_user -d pos_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://pos_user:${POSTGRES_PASSWORD}@postgres:5432/pos_db
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY_FILE: /run/secrets/jwt_secret
+      VAPID_PRIVATE_KEY_FILE: /run/secrets/vapid_private
+      VAPID_PUBLIC_KEY_FILE: /run/secrets/vapid_public
+      PAC_CREDENTIALS_FILE: /run/secrets/pac_credentials
+      APP_ENV: production
+      APP_DEBUG: "false"
+    secrets:
+      - db_password
+      - jwt_secret
+      - vapid_private
+      - vapid_public
+      - pac_credentials
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2G
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://pos_user:${POSTGRES_PASSWORD}@postgres:5432/pos_db
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY_FILE: /run/secrets/jwt_secret
+      PAC_CREDENTIALS_FILE: /run/secrets/pac_credentials
+      APP_ENV: production
+    secrets:
+      - db_password
+      - jwt_secret
+      - pac_credentials
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.celery_app worker -l INFO -Q dian,print,push,sync -c 2
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://pos_user:${POSTGRES_PASSWORD}@postgres:5432/pos_db
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY_FILE: /run/secrets/jwt_secret
+      APP_ENV: production
+    secrets:
+      - db_password
+      - jwt_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.celery_app beat -l INFO --scheduler celery.beat.PersistentScheduler
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  vapid_private:
+    file: ./secrets/vapid_private.pem
+  vapid_public:
+    file: ./secrets/vapid_public.pem
+  pac_credentials:
+    file: ./secrets/pac_credentials.json

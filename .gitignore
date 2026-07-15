@@ -1,0 +1,31 @@
+# pos-system
+# Docker
+.env
+.env.*
+!.env.example
+*.log
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+alembic.ini
+alembic/env.pyc
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+.p12

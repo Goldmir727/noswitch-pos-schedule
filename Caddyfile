@@ -1,0 +1,24 @@
+{env.DOMAIN} {
+    encode zstd gzip
+
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    header X-Content-Type-Options "nosniff"
+    header X-Frame-Options "DENY"
+    header Referrer-Policy "strict-origin-when-cross-origin"
+    header Permissions-Policy "interest-cohort=()"
+
+    @api path /api/* /docs /openapi.json /redoc
+    reverse_proxy @api api:8000
+
+    @ws path /ws/*
+    reverse_proxy @ws api:8000
+
+    @health path /health /healthz
+    reverse_proxy @health api:8000
+
+    root * /var/www/pwa
+    try_files {path} /index.html
+    file_server {
+        preload
+    }
+}
